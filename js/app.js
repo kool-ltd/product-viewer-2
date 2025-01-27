@@ -5,6 +5,7 @@ import { DragControls } from 'three/addons/controls/DragControls.js';
 import { ARButton } from 'three/addons/webxr/ARButton.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 
 class App {
     constructor() {
@@ -12,15 +13,21 @@ class App {
         this.draggableObjects = [];
         this.isARMode = false;
         this.placementMode = true;
-        this.controller = null;
+        this.controllers = [];
+        this.controllerGrips = [];
         this.raycaster = new THREE.Raycaster();
-        this.intersectionPoint = new THREE.Vector3();
-        this.planeNormal = new THREE.Vector3(0, 1, 0);
-        this.plane = new THREE.Plane(this.planeNormal);
-        this.selectedObject = null;
+        this.workingMatrix = new THREE.Matrix4();
+        this.workingVector = new THREE.Vector3();
         this.grabbing = false;
+        this.selectedObject = null;
         this.initialGrabPoint = new THREE.Vector3();
         this.initialObjectPosition = new THREE.Vector3();
+
+        // Debug line for raycaster visualization
+        this.debugLine = new THREE.Line(
+            new THREE.BufferGeometry(),
+            new THREE.LineBasicMaterial({ color: 0xff0000 })
+        );
 
         this.init();
         this.setupScene();
@@ -29,14 +36,6 @@ class App {
         this.setupFileUpload();
         this.setupARButton();
         this.animate();
-    }
-
-    onWindowResize() {
-        if (this.camera && this.renderer) {
-            this.camera.aspect = window.innerWidth / window.innerHeight;
-            this.camera.updateProjectionMatrix();
-            this.renderer.setSize(window.innerWidth, window.innerHeight);
-        }
     }
 
     init() {
@@ -59,10 +58,11 @@ class App {
         this.renderer.xr.enabled = true;
         this.container.appendChild(this.renderer.domElement);
 
-        // Setup VR controller
-        this.controller = this.renderer.xr.getController(0);
-        this.controller.addEventListener('select', this.onSelect.bind(this));
-        this.scene.add(this.controller);
+        // Add debug line to scene
+        this.scene.add(this.debugLine);
+
+        // Setup VR controllers
+        this.setupVRControllers();
 
         // Create placement indicator
         const geometry = new THREE.RingGeometry(0.15, 0.2, 32);
@@ -76,54 +76,58 @@ class App {
         document.body.appendChild(VRButton.createButton(this.renderer));
 
         window.addEventListener('resize', this.onWindowResize.bind(this));
-        
-        this.setupGrabbing();
     }
 
-    setupGrabbing() {
-        this.controller.addEventListener('selectstart', () => {
-            if (!this.placementMode) {
-                const controllerPosition = new THREE.Vector3().setFromMatrixPosition(this.controller.matrixWorld);
-                const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.controller.quaternion);
-                this.raycaster.set(controllerPosition, direction);
+    setupVRControllers() {
+        // Controller 0
+        this.controller1 = this.renderer.xr.getController(0);
+        this.controller1.addEventListener('selectstart', (evt) => this.onSelectStart(evt, 0));
+        this.controller1.addEventListener('selectend', (evt) => this.onSelectEnd(evt, 0));
+        this.scene.add(this.controller1);
+        this.controllers.push(this.controller1);
 
-                const intersects = this.raycaster.intersectObjects(this.draggableObjects, true);
-                if (intersects.length > 0) {
-                    this.grabbing = true;
-                    this.selectedObject = this.findTopLevelObject(intersects[0].object);
-                    this.initialGrabPoint.copy(controllerPosition);
-                    this.initialObjectPosition.copy(this.selectedObject.position);
-                }
-            }
+        // Controller 1
+        this.controller2 = this.renderer.xr.getController(1);
+        this.controller2.addEventListener('selectstart', (evt) => this.onSelectStart(evt, 1));
+        this.controller2.addEventListener('selectend', (evt) => this.onSelectEnd(evt, 1));
+        this.scene.add(this.controller2);
+        this.controllers.push(this.controller2);
+
+        // Controller grips
+        const controllerModelFactory = new XRControllerModelFactory();
+
+        this.controllerGrip1 = this.renderer.xr.getControllerGrip(0);
+        this.controllerGrip1.add(controllerModelFactory.createControllerModel(this.controllerGrip1));
+        this.scene.add(this.controllerGrip1);
+        this.controllerGrips.push(this.controllerGrip1);
+
+        this.controllerGrip2 = this.renderer.xr.getControllerGrip(1);
+        this.controllerGrip2.add(controllerModelFactory.createControllerModel(this.controllerGrip2));
+        this.scene.add(this.controllerGrip2);
+        this.controllerGrips.push(this.controllerGrip2);
+
+        // Add targeting ray
+        const lineGeometry = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, 0, 0),
+            new THREE.Vector3(0, 0, -1)
+        ]);
+        const lineMaterial = new THREE.LineBasicMaterial({
+            color: 0xffffff
         });
+        const line = new THREE.Line(lineGeometry, lineMaterial);
+        line.scale.z = 5;
 
-        this.controller.addEventListener('selectend', () => {
-            this.grabbing = false;
-            this.selectedObject = null;
-        });
+        this.controller1.add(line.clone());
+        this.controller2.add(line.clone());
     }
 
-    findTopLevelObject(object) {
-        while (object.parent && object.parent !== this.scene) {
-            object = object.parent;
-        }
-        return object;
-    }
-
-    onSelect() {
-        if (this.placementMode) {
-            this.placementMode = false;
-            this.placementIndicator.visible = false;
-            // Make all models visible at the placement position
-            this.draggableObjects.forEach(object => {
-                object.visible = true;
-                object.position.copy(this.placementIndicator.position);
-                // Ensure 1:1 scale
-                object.scale.setScalar(1);
-            });
+    onWindowResize() {
+        if (this.camera && this.renderer) {
+            this.camera.aspect = window.innerWidth / window.innerHeight;
+            this.camera.updateProjectionMatrix();
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
         }
     }
-
     setupScene() {
         this.scene.background = new THREE.Color(0xcccccc);
 
@@ -139,27 +143,6 @@ class App {
         });
     }
 
-    setupARButton() {
-        if ('xr' in navigator) {
-            const arButton = ARButton.createButton(this.renderer, {
-                requiredFeatures: ['hit-test'],
-                optionalFeatures: ['dom-overlay'],
-                domOverlay: { root: document.body }
-            });
-            document.body.appendChild(arButton);
-
-            this.renderer.xr.addEventListener('sessionstart', () => {
-                this.isARMode = true;
-                this.scene.background = null;
-            });
-
-            this.renderer.xr.addEventListener('sessionend', () => {
-                this.isARMode = false;
-                this.scene.background = new THREE.Color(0xcccccc);
-            });
-        }
-    }
-
     setupLights() {
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
         this.scene.add(ambientLight);
@@ -169,23 +152,60 @@ class App {
         this.scene.add(directionalLight);
     }
 
+    onSelectStart(event, controllerIndex) {
+        const controller = event.target;
+
+        if (this.placementMode) {
+            this.placementMode = false;
+            this.placementIndicator.visible = false;
+            // Make all models visible at the placement position
+            this.draggableObjects.forEach(object => {
+                object.visible = true;
+                object.position.copy(this.placementIndicator.position);
+                object.scale.setScalar(1);
+            });
+            return;
+        }
+
+        // Get controller position and direction
+        this.workingMatrix.identity().extractRotation(controller.matrixWorld);
+        this.raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+        this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(this.workingMatrix);
+
+        const intersects = this.raycaster.intersectObjects(this.draggableObjects, true);
+        
+        if (intersects.length > 0) {
+            this.grabbing = true;
+            this.selectedObject = this.findTopLevelObject(intersects[0].object);
+            controller.userData.selected = this.selectedObject;
+            controller.userData.initialPosition = this.selectedObject.position.clone();
+            controller.userData.initialControllerPosition = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+        }
+    }
+
+    onSelectEnd(event, controllerIndex) {
+        const controller = event.target;
+
+        if (controller.userData.selected) {
+            this.grabbing = false;
+            this.selectedObject = null;
+            controller.userData.selected = undefined;
+            controller.userData.initialPosition = undefined;
+            controller.userData.initialControllerPosition = undefined;
+        }
+    }
+
+    findTopLevelObject(object) {
+        while (object.parent && object.parent !== this.scene) {
+            object = object.parent;
+        }
+        return object;
+    }
+
     setupInitialControls() {
         this.orbitControls = new OrbitControls(this.camera, this.renderer.domElement);
         this.orbitControls.enableDamping = true;
         this.orbitControls.dampingFactor = 0.05;
-
-        this.dragControls = new DragControls(this.draggableObjects, this.camera, this.renderer.domElement);
-        this.setupControlsEventListeners();
-    }
-
-    setupControlsEventListeners() {
-        this.dragControls.addEventListener('dragstart', () => {
-            this.orbitControls.enabled = false;
-        });
-
-        this.dragControls.addEventListener('dragend', () => {
-            this.orbitControls.enabled = true;
-        });
     }
 
     setupFileUpload() {
@@ -223,6 +243,27 @@ class App {
         document.body.appendChild(uploadContainer);
     }
 
+    setupARButton() {
+        if ('xr' in navigator) {
+            const arButton = ARButton.createButton(this.renderer, {
+                requiredFeatures: ['hit-test'],
+                optionalFeatures: ['dom-overlay'],
+                domOverlay: { root: document.body }
+            });
+            document.body.appendChild(arButton);
+
+            this.renderer.xr.addEventListener('sessionstart', () => {
+                this.isARMode = true;
+                this.scene.background = null;
+            });
+
+            this.renderer.xr.addEventListener('sessionend', () => {
+                this.isARMode = false;
+                this.scene.background = new THREE.Color(0xcccccc);
+            });
+        }
+    }
+
     clearExistingModels() {
         this.loadedModels.forEach(model => {
             this.scene.remove(model);
@@ -230,8 +271,6 @@ class App {
         
         this.loadedModels.clear();
         this.draggableObjects.length = 0;
-        
-        this.updateDragControls();
     }
 
     loadModel(url, name) {
@@ -241,8 +280,8 @@ class App {
             (gltf) => {
                 const model = gltf.scene;
                 model.userData.isDraggable = true;
+                model.matrixAutoUpdate = true;
                 
-                // Initially hide the model until placed in VR
                 if (this.renderer.xr.isPresenting) {
                     model.visible = false;
                 }
@@ -251,8 +290,6 @@ class App {
                 this.scene.add(model);
                 this.loadedModels.set(name, model);
                 
-                this.updateDragControls();
-
                 if (!this.renderer.xr.isPresenting) {
                     this.fitCameraToScene();
                 }
@@ -266,15 +303,47 @@ class App {
         );
     }
 
-    updateDragControls() {
-        const draggableObjects = Array.from(this.loadedModels.values());
-        
-        if (this.dragControls) {
-            this.dragControls.dispose();
-        }
+    updateXRInteraction() {
+        this.controllers.forEach((controller) => {
+            if (controller.userData.selected) {
+                const currentPosition = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+                const deltaPosition = new THREE.Vector3();
+                deltaPosition.subVectors(currentPosition, controller.userData.initialControllerPosition);
+                controller.userData.selected.position.copy(controller.userData.initialPosition).add(deltaPosition);
+            }
+        });
 
-        this.dragControls = new DragControls(draggableObjects, this.camera, this.renderer.domElement);
-        this.setupControlsEventListeners();
+        // Update debug ray
+        if (this.debugLine && this.controllers[0]) {
+            const controller = this.controllers[0];
+            this.workingMatrix.identity().extractRotation(controller.matrixWorld);
+            const origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+            const direction = new THREE.Vector3(0, 0, -1).applyMatrix4(this.workingMatrix);
+            const points = [
+                origin,
+                origin.clone().add(direction.multiplyScalar(10))
+            ];
+            this.debugLine.geometry.setFromPoints(points);
+        }
+    }
+
+    updatePlacementIndicator() {
+        if (!this.placementMode || !this.renderer.xr.isPresenting) return;
+
+        const controller = this.controllers[0];
+        if (!controller) return;
+
+        this.workingMatrix.identity().extractRotation(controller.matrixWorld);
+        this.raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+        this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(this.workingMatrix);
+
+        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0));
+        const intersectionPoint = new THREE.Vector3();
+
+        if (this.raycaster.ray.intersectPlane(plane, intersectionPoint)) {
+            this.placementIndicator.position.copy(intersectionPoint);
+            this.placementIndicator.visible = true;
+        }
     }
 
     fitCameraToScene() {
@@ -294,25 +363,19 @@ class App {
         this.orbitControls.update();
     }
 
-    updatePlacementIndicator() {
-        if (!this.placementMode || !this.renderer.xr.isPresenting) return;
-
-        const controllerPosition = new THREE.Vector3().setFromMatrixPosition(this.controller.matrixWorld);
-        const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.controller.quaternion);
-        this.raycaster.set(controllerPosition, direction);
-
-        if (this.raycaster.ray.intersectPlane(this.plane, this.intersectionPoint)) {
-            this.placementIndicator.position.copy(this.intersectionPoint);
-            this.placementIndicator.visible = true;
-        }
-    }
-
-    updateGrabbing() {
-        if (this.grabbing && this.selectedObject) {
-            const controllerPosition = new THREE.Vector3().setFromMatrixPosition(this.controller.matrixWorld);
-            const delta = new THREE.Vector3().subVectors(controllerPosition, this.initialGrabPoint);
-            this.selectedObject.position.copy(this.initialObjectPosition).add(delta);
-        }
+    animate() {
+        this.renderer.setAnimationLoop(() => {
+            if (this.renderer.xr.isPresenting) {
+                if (this.placementMode) {
+                    this.updatePlacementIndicator();
+                } else {
+                    this.updateXRInteraction();
+                }
+            } else {
+                this.orbitControls.update();
+            }
+            this.renderer.render(this.scene, this.camera);
+        });
     }
 
     loadDefaultModels() {
@@ -325,19 +388,6 @@ class App {
 
         models.forEach(model => {
             this.loadModel(model.url, model.name);
-        });
-    }
-
-    animate() {
-        this.renderer.setAnimationLoop(() => {
-            if (this.renderer.xr.isPresenting) {
-                this.updatePlacementIndicator();
-                this.updateGrabbing();
-                this.renderer.render(this.scene, this.camera);
-            } else {
-                this.orbitControls.update();
-                this.renderer.render(this.scene, this.camera);
-            }
         });
     }
 }
