@@ -96,7 +96,6 @@ class App {
         this.rotationIndicator.visible = false;
         this.scene.add(this.rotationIndicator);
     }
-
     setupVRControllers() {
         // Controller 0
         this.controller1 = this.renderer.xr.getController(0);
@@ -155,6 +154,7 @@ class App {
         this.controller1.add(line.clone());
         this.controller2.add(line.clone());
     }
+
     onWindowResize() {
         if (this.camera && this.renderer) {
             this.camera.aspect = window.innerWidth / window.innerHeight;
@@ -186,7 +186,6 @@ class App {
         directionalLight.position.set(5, 5, 5);
         this.scene.add(directionalLight);
     }
-
     onSelectStart(event, controllerIndex) {
         const controller = event.target;
 
@@ -286,4 +285,184 @@ class App {
         uploadContainer.appendChild(fileInput);
         document.body.appendChild(uploadContainer);
     }
+    setupARButton() {
+        if ('xr' in navigator) {
+            const arButton = ARButton.createButton(this.renderer, {
+                requiredFeatures: ['hit-test'],
+                optionalFeatures: ['dom-overlay'],
+                domOverlay: { root: document.body }
+            });
+            document.body.appendChild(arButton);
+
+            this.renderer.xr.addEventListener('sessionstart', () => {
+                this.isARMode = true;
+                this.scene.background = null;
+            });
+
+            this.renderer.xr.addEventListener('sessionend', () => {
+                this.isARMode = false;
+                this.scene.background = new THREE.Color(0xcccccc);
+            });
+        }
+    }
+
+    clearExistingModels() {
+        this.loadedModels.forEach(model => {
+            this.scene.remove(model);
+        });
+        
+        this.loadedModels.clear();
+        this.draggableObjects.length = 0;
+    }
+
+    loadModel(url, name) {
+        const loader = new GLTFLoader();
+        loader.load(
+            url, 
+            (gltf) => {
+                const model = gltf.scene;
+                model.userData.isDraggable = true;
+                model.matrixAutoUpdate = true;
+                
+                if (this.renderer.xr.isPresenting) {
+                    model.visible = false;
+                }
+                
+                this.draggableObjects.push(model);
+                this.scene.add(model);
+                this.loadedModels.set(name, model);
+                
+                if (!this.renderer.xr.isPresenting) {
+                    this.fitCameraToScene();
+                }
+            },
+            (xhr) => {
+                console.log(`${name} ${(xhr.loaded / xhr.total * 100)}% loaded`);
+            },
+            (error) => {
+                console.error(`Error loading model ${name}:`, error);
+            }
+        );
+    }
+
+    updateXRInteraction() {
+        this.controllers.forEach((controller) => {
+            if (controller.userData.selected) {
+                const selectedObject = controller.userData.selected;
+                const currentPosition = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+                this.workingMatrix.identity().extractRotation(controller.matrixWorld);
+                const currentRotation = new THREE.Quaternion().setFromRotationMatrix(this.workingMatrix);
+
+                if (this.rotationMode) {
+                    // Calculate rotation difference
+                    const rotationDelta = new THREE.Quaternion()
+                        .copy(this.lastControllerRotation)
+                        .invert()
+                        .multiply(currentRotation);
+
+                    // Apply rotation
+                    selectedObject.quaternion.copy(this.initialObjectRotation)
+                        .multiply(rotationDelta);
+                } else {
+                    // Regular position movement
+                    const deltaPosition = new THREE.Vector3();
+                    deltaPosition.subVectors(currentPosition, controller.userData.initialControllerPosition);
+                    selectedObject.position.copy(controller.userData.initialPosition).add(deltaPosition);
+                }
+
+                // Update last known rotation
+                this.lastControllerRotation.copy(currentRotation);
+            }
+        });
+
+        // Update rotation indicator
+        if (this.rotationIndicator) {
+            this.rotationIndicator.visible = this.rotationMode && this.selectedObject;
+            if (this.rotationIndicator.visible) {
+                this.rotationIndicator.position.copy(this.selectedObject.position);
+                this.rotationIndicator.lookAt(this.camera.position);
+            }
+        }
+
+        // Update debug ray
+        if (this.debugLine && this.controllers[0]) {
+            const controller = this.controllers[0];
+            this.workingMatrix.identity().extractRotation(controller.matrixWorld);
+            const origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+            const direction = new THREE.Vector3(0, 0, -1).applyMatrix4(this.workingMatrix);
+            const points = [
+                origin,
+                origin.clone().add(direction.multiplyScalar(10))
+            ];
+            this.debugLine.geometry.setFromPoints(points);
+        }
+    }
+    updatePlacementIndicator() {
+        if (!this.placementMode || !this.renderer.xr.isPresenting) return;
+
+        const controller = this.controllers[0];
+        if (!controller) return;
+
+        this.workingMatrix.identity().extractRotation(controller.matrixWorld);
+        this.raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+        this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(this.workingMatrix);
+
+        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0));
+        const intersectionPoint = new THREE.Vector3();
+
+        if (this.raycaster.ray.intersectPlane(plane, intersectionPoint)) {
+            this.placementIndicator.position.copy(intersectionPoint);
+            this.placementIndicator.visible = true;
+        }
+    }
+
+    fitCameraToScene() {
+        const box = new THREE.Box3().setFromObject(this.scene);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const fov = this.camera.fov * (Math.PI / 180);
+        let cameraZ = Math.abs(maxDim / Math.tan(fov / 2));
+
+        cameraZ *= 1.5;
+
+        this.camera.position.set(0, 0, cameraZ);
+        this.orbitControls.target.copy(center);
+        this.camera.updateProjectionMatrix();
+        this.orbitControls.update();
+    }
+
+    animate() {
+        this.renderer.setAnimationLoop(() => {
+            if (this.renderer.xr.isPresenting) {
+                if (this.placementMode) {
+                    this.updatePlacementIndicator();
+                } else {
+                    this.updateXRInteraction();
+                }
+            } else {
+                this.orbitControls.update();
+            }
+            this.renderer.render(this.scene, this.camera);
+        });
+    }
+
+    loadDefaultModels() {
+        const models = [
+            { url: './assets/kool-mandoline-blade.glb', name: 'blade' },
+            { url: './assets/kool-mandoline-frame.glb', name: 'frame' },
+            { url: './assets/kool-mandoline-handguard.glb', name: 'handguard' },
+            { url: './assets/kool-mandoline-handletpe.glb', name: 'handle' }
+        ];
+
+        models.forEach(model => {
+            this.loadModel(model.url, model.name);
+        });
+    }
 }
+
+const app = new App();
+app.loadDefaultModels();
+
+export default app;
