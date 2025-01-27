@@ -7,21 +7,66 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <title>3D Model Viewer with AR</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
+    body {
+        margin: 0;
+        padding: 0;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+    }
+
+    #scene-container {
+        position: fixed;
+        width: 100%;
+        height: 100%;
+        left: 0;
+        top: 0;
+    }
+
+    /* Fix for overlapping VR/AR buttons */
+    #VRButton {
+        bottom: 20px !important;
+        top: auto !important;
+    }
+
+    #ARButton {
+        bottom: 80px !important;
+        top: auto !important;
+    }
+
+    /* Hide 'VR not supported' button on mobile */
+    @media (max-width: 640px) {
+        #VRButton.VRButton-unsupported {
+            display: none !important;
         }
-        body {
-            overflow: hidden;
-        }
-        #scene-container {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-        }
-    </style>
+    }
+
+    /* Style for file upload button */
+    #upload-container {
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        z-index: 1000;
+    }
+
+    #upload-container button {
+        padding: 10px 20px;
+        background-color: #4CAF50;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+    }
+
+    #upload-container button:hover {
+        background-color: #45a049;
+    }
+
+    #file-input {
+        display: none;
+    }
+</style>
 </head>
 <body>
     <div id="scene-container"></div>
