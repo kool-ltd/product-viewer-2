@@ -10,6 +10,8 @@ class App {
         this.loadedModels = new Map();
         this.draggableObjects = [];
         this.isARMode = false;
+        this.selectedObject = null; // Track the selected object for movement
+        this.hitTestSource = null; // For AR hit testing
 
         this.init();
         this.setupScene();
@@ -79,14 +81,51 @@ class App {
             this.renderer.xr.addEventListener('sessionstart', () => {
                 this.isARMode = true;
                 this.scene.background = null;  // Remove background in AR
+
+                // Initialize hit testing
+                this.setupHitTesting();
             });
 
             // Restore background when exiting AR
             this.renderer.xr.addEventListener('sessionend', () => {
                 this.isARMode = false;
                 this.scene.background = new THREE.Color(0xcccccc);  // Restore gray background
+                this.hitTestSource = null; // Reset hit test source
             });
         }
+    }
+
+    setupHitTesting() {
+        const session = this.renderer.xr.getSession();
+        const referenceSpace = this.renderer.xr.getReferenceSpace();
+
+        // Create a hit test source
+        session.requestReferenceSpace('viewer').then((referenceSpace) => {
+            session.requestHitTestSource({ space: referenceSpace }).then((hitTestSource) => {
+                this.hitTestSource = hitTestSource;
+            });
+        });
+
+        // Perform hit testing in the animation loop
+        this.renderer.setAnimationLoop(() => {
+            if (this.isARMode && this.hitTestSource) {
+                const frame = this.renderer.xr.getFrame();
+                const hitTestResults = frame.getHitTestResults(this.hitTestSource);
+
+                if (hitTestResults.length > 0 && !this.selectedObject) {
+                    const hit = hitTestResults[0];
+                    const hitPose = hit.getPose(referenceSpace);
+
+                    // Place the first loaded model at the hit position
+                    if (this.loadedModels.size > 0) {
+                        const model = this.loadedModels.values().next().value;
+                        model.position.setFromMatrixPosition(hitPose.transform.matrix);
+                        model.quaternion.setFromRotationMatrix(hitPose.transform.matrix);
+                    }
+                }
+            }
+            this.renderer.render(this.scene, this.camera);
+        });
     }
 
     setupLights() {
@@ -179,16 +218,6 @@ class App {
             if (!this.isARMode) {
                 this.orbitControls.enabled = true;
             }
-        });
-    }
-
-    setupControlsEventListeners() {
-        this.dragControls.addEventListener('dragstart', () => {
-            this.orbitControls.enabled = false;
-        });
-
-        this.dragControls.addEventListener('dragend', () => {
-            this.orbitControls.enabled = true;
         });
     }
 
@@ -290,19 +319,6 @@ class App {
         this.orbitControls.target.copy(center);
         this.camera.updateProjectionMatrix();
         this.orbitControls.update();
-    }
-
-    loadDefaultModels() {
-        const models = [
-            { url: './assets/kool-mandoline-blade.glb', name: 'blade' },
-            { url: './assets/kool-mandoline-frame.glb', name: 'frame' },
-            { url: './assets/kool-mandoline-handguard.glb', name: 'handguard' },
-            { url: './assets/kool-mandoline-handletpe.glb', name: 'handle' }
-        ];
-
-        models.forEach(model => {
-            this.loadModel(model.url, model.name);
-        });
     }
 
     animate() {
