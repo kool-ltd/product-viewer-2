@@ -7,6 +7,7 @@ export class SceneManager {
         this.setupCamera();
         this.setupRenderer();
         this.setupLights();
+        this.setupPlacementRing(); // Add placement ring
     }
 
     setupScene() {
@@ -46,6 +47,28 @@ export class SceneManager {
     setEnvironmentMap(envMap) {
         this.scene.environment = envMap;
         this.scene.background = envMap;
+    }
+
+    setupPlacementRing() {
+        const ringGeometry = new THREE.RingGeometry(0.1, 0.2, 32);
+        const ringMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide });
+        this.placementRing = new THREE.Mesh(ringGeometry, ringMaterial);
+        this.placementRing.rotation.x = -Math.PI / 2; // Make it horizontal
+        this.placementRing.visible = false;
+        this.scene.add(this.placementRing);
+    }
+
+    updatePlacementRing(position) {
+        if (this.placementRing) {
+            this.placementRing.position.copy(position);
+            this.placementRing.visible = true;
+        }
+    }
+
+    hidePlacementRing() {
+        if (this.placementRing) {
+            this.placementRing.visible = false;
+        }
     }
 
     onWindowResize() {
