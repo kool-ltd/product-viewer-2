@@ -286,3 +286,4 @@ class App {
         uploadContainer.appendChild(fileInput);
         document.body.appendChild(uploadContainer);
     }
+}
