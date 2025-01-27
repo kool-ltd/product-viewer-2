@@ -244,6 +244,21 @@ class App {
         this.orbitControls = new OrbitControls(this.camera, this.renderer.domElement);
         this.orbitControls.enableDamping = true;
         this.orbitControls.dampingFactor = 0.05;
+    
+        this.dragControls = new DragControls(this.draggableObjects, this.camera, this.renderer.domElement);
+        
+        this.dragControls.addEventListener('dragstart', () => {
+            this.orbitControls.enabled = false;
+        });
+    
+        this.dragControls.addEventListener('dragend', () => {
+            this.orbitControls.enabled = true;
+        });
+    
+        // Update draggable objects when new models are loaded
+        this.dragControls.addEventListener('drag', (event) => {
+            event.object.position.y = Math.max(event.object.position.y, 0); // Prevent going below ground
+        });
     }
 
     setupFileUpload() {
@@ -327,13 +342,16 @@ class App {
                 this.scene.add(model);
                 this.loadedModels.set(name, model);
                 
+                // Update drag controls objects
+                if (this.dragControls) {
+                    this.dragControls.objects = this.draggableObjects;
+                }
+                
                 if (!this.renderer.xr.isPresenting) {
                     this.fitCameraToScene();
                 }
             },
-            (xhr) => {
-                console.log(`${name} ${(xhr.loaded / xhr.total * 100)}% loaded`);
-            },
+            undefined,
             (error) => {
                 console.error(`Error loading model ${name}:`, error);
             }
@@ -356,47 +374,54 @@ class App {
                 selectedObject.position.copy(controller.userData.initialPosition).add(deltaPosition);
 
                 // Update rotation
-                const rotationDelta = new THREE.Quaternion()
-                    .copy(controller.userData.initialControllerRotation)
-                    .invert()
-                    .multiply(currentRotation);
-                
-                selectedObject.quaternion.copy(controller.userData.initialObjectRotation)
-                    .multiply(rotationDelta);
+                if (this.rotationMode) {
+                    const rotationDelta = new THREE.Quaternion()
+                        .copy(currentRotation)
+                        .multiply(controller.userData.initialControllerRotation.clone().invert());
+                    
+                    selectedObject.quaternion.copy(controller.userData.initialObjectRotation)
+                        .premultiply(rotationDelta);
+                }
             }
         });
     }
+    
     updatePlacementIndicator() {
         if (!this.placementMode || !this.renderer.xr.isPresenting) return;
-
-        const controller = this.controllers[0];
-        if (!controller) return;
-
-        this.workingMatrix.identity().extractRotation(controller.matrixWorld);
-        this.raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
-        this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(this.workingMatrix);
-
-        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0));
-        const intersectionPoint = new THREE.Vector3();
-
-        if (this.raycaster.ray.intersectPlane(plane, intersectionPoint)) {
-            this.placementIndicator.position.copy(intersectionPoint);
-            this.placementIndicator.visible = true;
-        }
+    
+        const session = this.renderer.xr.getSession();
+        if (!session) return;
+    
+        session.requestHitTestSource({ space: 'viewer' }).then((source) => {
+            const hitTestResults = frame.getHitTestResults(source);
+            if (hitTestResults.length) {
+                const hit = hitTestResults[0];
+                const pose = hit.getPose(this.renderer.xr.getReferenceSpace());
+                
+                this.placementIndicator.visible = true;
+                this.placementIndicator.position.set(
+                    pose.transform.position.x,
+                    pose.transform.position.y,
+                    pose.transform.position.z
+                );
+            } else {
+                this.placementIndicator.visible = false;
+            }
+        });
     }
 
     fitCameraToScene() {
         const box = new THREE.Box3().setFromObject(this.scene);
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
-
+    
         const maxDim = Math.max(size.x, size.y, size.z);
         const fov = this.camera.fov * (Math.PI / 180);
         let cameraZ = Math.abs(maxDim / Math.tan(fov / 2));
-
-        cameraZ *= 1.5;
-
-        this.camera.position.set(0, 0, cameraZ);
+    
+        // Adjust these values for better initial view
+        cameraZ *= 0.5;
+        this.camera.position.set(0, maxDim * 0.2, cameraZ);
         this.orbitControls.target.copy(center);
         this.camera.updateProjectionMatrix();
         this.orbitControls.update();
