@@ -212,16 +212,11 @@ class App {
             this.selectedObject = this.findTopLevelObject(intersects[0].object);
             controller.userData.selected = this.selectedObject;
             
-            // Store initial positions
+            // Store initial positions and rotations
             controller.userData.initialPosition = this.selectedObject.position.clone();
             controller.userData.initialControllerPosition = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
-            
-            // Store initial rotations
-            this.lastControllerRotation.setFromRotationMatrix(this.workingMatrix);
-            this.initialObjectRotation.copy(this.selectedObject.quaternion);
-            
-            // Check if secondary button is pressed (grip button)
-            this.rotationMode = controller.gamepad?.buttons[1]?.pressed || false;
+            controller.userData.initialControllerRotation = new THREE.Quaternion().setFromRotationMatrix(this.workingMatrix);
+            controller.userData.initialObjectRotation = this.selectedObject.quaternion.clone();
         }
     }
 
@@ -349,53 +344,27 @@ class App {
         this.controllers.forEach((controller) => {
             if (controller.userData.selected) {
                 const selectedObject = controller.userData.selected;
+                
+                // Get current controller position and rotation
                 const currentPosition = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
                 this.workingMatrix.identity().extractRotation(controller.matrixWorld);
                 const currentRotation = new THREE.Quaternion().setFromRotationMatrix(this.workingMatrix);
 
-                if (this.rotationMode) {
-                    // Calculate rotation difference
-                    const rotationDelta = new THREE.Quaternion()
-                        .copy(this.lastControllerRotation)
-                        .invert()
-                        .multiply(currentRotation);
+                // Update position
+                const deltaPosition = new THREE.Vector3();
+                deltaPosition.subVectors(currentPosition, controller.userData.initialControllerPosition);
+                selectedObject.position.copy(controller.userData.initialPosition).add(deltaPosition);
 
-                    // Apply rotation
-                    selectedObject.quaternion.copy(this.initialObjectRotation)
-                        .multiply(rotationDelta);
-                } else {
-                    // Regular position movement
-                    const deltaPosition = new THREE.Vector3();
-                    deltaPosition.subVectors(currentPosition, controller.userData.initialControllerPosition);
-                    selectedObject.position.copy(controller.userData.initialPosition).add(deltaPosition);
-                }
-
-                // Update last known rotation
-                this.lastControllerRotation.copy(currentRotation);
+                // Update rotation
+                const rotationDelta = new THREE.Quaternion()
+                    .copy(controller.userData.initialControllerRotation)
+                    .invert()
+                    .multiply(currentRotation);
+                
+                selectedObject.quaternion.copy(controller.userData.initialObjectRotation)
+                    .multiply(rotationDelta);
             }
         });
-
-        // Update rotation indicator
-        if (this.rotationIndicator) {
-            this.rotationIndicator.visible = this.rotationMode && this.selectedObject;
-            if (this.rotationIndicator.visible) {
-                this.rotationIndicator.position.copy(this.selectedObject.position);
-                this.rotationIndicator.lookAt(this.camera.position);
-            }
-        }
-
-        // Update debug ray
-        if (this.debugLine && this.controllers[0]) {
-            const controller = this.controllers[0];
-            this.workingMatrix.identity().extractRotation(controller.matrixWorld);
-            const origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
-            const direction = new THREE.Vector3(0, 0, -1).applyMatrix4(this.workingMatrix);
-            const points = [
-                origin,
-                origin.clone().add(direction.multiplyScalar(10))
-            ];
-            this.debugLine.geometry.setFromPoints(points);
-        }
     }
     updatePlacementIndicator() {
         if (!this.placementMode || !this.renderer.xr.isPresenting) return;
