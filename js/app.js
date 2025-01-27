@@ -22,6 +22,11 @@ class App {
         this.selectedObject = null;
         this.initialGrabPoint = new THREE.Vector3();
         this.initialObjectPosition = new THREE.Vector3();
+        
+        // Rotation control properties
+        this.rotationMode = false;
+        this.lastControllerRotation = new THREE.Quaternion();
+        this.initialObjectRotation = new THREE.Quaternion();
 
         // Debug line for raycaster visualization
         this.debugLine = new THREE.Line(
@@ -35,6 +40,7 @@ class App {
         this.setupInitialControls();
         this.setupFileUpload();
         this.setupARButton();
+        this.setupRotationIndicator();
         this.animate();
     }
 
@@ -78,11 +84,32 @@ class App {
         window.addEventListener('resize', this.onWindowResize.bind(this));
     }
 
+    setupRotationIndicator() {
+        const geometry = new THREE.RingGeometry(0.1, 0.15, 32);
+        const material = new THREE.MeshBasicMaterial({ 
+            color: 0x00ff00,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.5
+        });
+        this.rotationIndicator = new THREE.Mesh(geometry, material);
+        this.rotationIndicator.visible = false;
+        this.scene.add(this.rotationIndicator);
+    }
+
     setupVRControllers() {
         // Controller 0
         this.controller1 = this.renderer.xr.getController(0);
         this.controller1.addEventListener('selectstart', (evt) => this.onSelectStart(evt, 0));
         this.controller1.addEventListener('selectend', (evt) => this.onSelectEnd(evt, 0));
+        this.controller1.addEventListener('squeezestart', () => {
+            if (this.controller1.userData.selected) {
+                this.rotationMode = true;
+            }
+        });
+        this.controller1.addEventListener('squeezeend', () => {
+            this.rotationMode = false;
+        });
         this.scene.add(this.controller1);
         this.controllers.push(this.controller1);
 
@@ -90,6 +117,14 @@ class App {
         this.controller2 = this.renderer.xr.getController(1);
         this.controller2.addEventListener('selectstart', (evt) => this.onSelectStart(evt, 1));
         this.controller2.addEventListener('selectend', (evt) => this.onSelectEnd(evt, 1));
+        this.controller2.addEventListener('squeezestart', () => {
+            if (this.controller2.userData.selected) {
+                this.rotationMode = true;
+            }
+        });
+        this.controller2.addEventListener('squeezeend', () => {
+            this.rotationMode = false;
+        });
         this.scene.add(this.controller2);
         this.controllers.push(this.controller2);
 
@@ -120,7 +155,6 @@ class App {
         this.controller1.add(line.clone());
         this.controller2.add(line.clone());
     }
-
     onWindowResize() {
         if (this.camera && this.renderer) {
             this.camera.aspect = window.innerWidth / window.innerHeight;
@@ -128,6 +162,7 @@ class App {
             this.renderer.setSize(window.innerWidth, window.innerHeight);
         }
     }
+
     setupScene() {
         this.scene.background = new THREE.Color(0xcccccc);
 
@@ -158,7 +193,6 @@ class App {
         if (this.placementMode) {
             this.placementMode = false;
             this.placementIndicator.visible = false;
-            // Make all models visible at the placement position
             this.draggableObjects.forEach(object => {
                 object.visible = true;
                 object.position.copy(this.placementIndicator.position);
@@ -178,8 +212,17 @@ class App {
             this.grabbing = true;
             this.selectedObject = this.findTopLevelObject(intersects[0].object);
             controller.userData.selected = this.selectedObject;
+            
+            // Store initial positions
             controller.userData.initialPosition = this.selectedObject.position.clone();
             controller.userData.initialControllerPosition = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
+            
+            // Store initial rotations
+            this.lastControllerRotation.setFromRotationMatrix(this.workingMatrix);
+            this.initialObjectRotation.copy(this.selectedObject.quaternion);
+            
+            // Check if secondary button is pressed (grip button)
+            this.rotationMode = controller.gamepad?.buttons[1]?.pressed || false;
         }
     }
 
@@ -192,6 +235,7 @@ class App {
             controller.userData.selected = undefined;
             controller.userData.initialPosition = undefined;
             controller.userData.initialControllerPosition = undefined;
+            this.rotationMode = false;
         }
     }
 
@@ -242,157 +286,3 @@ class App {
         uploadContainer.appendChild(fileInput);
         document.body.appendChild(uploadContainer);
     }
-
-    setupARButton() {
-        if ('xr' in navigator) {
-            const arButton = ARButton.createButton(this.renderer, {
-                requiredFeatures: ['hit-test'],
-                optionalFeatures: ['dom-overlay'],
-                domOverlay: { root: document.body }
-            });
-            document.body.appendChild(arButton);
-
-            this.renderer.xr.addEventListener('sessionstart', () => {
-                this.isARMode = true;
-                this.scene.background = null;
-            });
-
-            this.renderer.xr.addEventListener('sessionend', () => {
-                this.isARMode = false;
-                this.scene.background = new THREE.Color(0xcccccc);
-            });
-        }
-    }
-
-    clearExistingModels() {
-        this.loadedModels.forEach(model => {
-            this.scene.remove(model);
-        });
-        
-        this.loadedModels.clear();
-        this.draggableObjects.length = 0;
-    }
-
-    loadModel(url, name) {
-        const loader = new GLTFLoader();
-        loader.load(
-            url, 
-            (gltf) => {
-                const model = gltf.scene;
-                model.userData.isDraggable = true;
-                model.matrixAutoUpdate = true;
-                
-                if (this.renderer.xr.isPresenting) {
-                    model.visible = false;
-                }
-                
-                this.draggableObjects.push(model);
-                this.scene.add(model);
-                this.loadedModels.set(name, model);
-                
-                if (!this.renderer.xr.isPresenting) {
-                    this.fitCameraToScene();
-                }
-            },
-            (xhr) => {
-                console.log(`${name} ${(xhr.loaded / xhr.total * 100)}% loaded`);
-            },
-            (error) => {
-                console.error(`Error loading model ${name}:`, error);
-            }
-        );
-    }
-
-    updateXRInteraction() {
-        this.controllers.forEach((controller) => {
-            if (controller.userData.selected) {
-                const currentPosition = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
-                const deltaPosition = new THREE.Vector3();
-                deltaPosition.subVectors(currentPosition, controller.userData.initialControllerPosition);
-                controller.userData.selected.position.copy(controller.userData.initialPosition).add(deltaPosition);
-            }
-        });
-
-        // Update debug ray
-        if (this.debugLine && this.controllers[0]) {
-            const controller = this.controllers[0];
-            this.workingMatrix.identity().extractRotation(controller.matrixWorld);
-            const origin = new THREE.Vector3().setFromMatrixPosition(controller.matrixWorld);
-            const direction = new THREE.Vector3(0, 0, -1).applyMatrix4(this.workingMatrix);
-            const points = [
-                origin,
-                origin.clone().add(direction.multiplyScalar(10))
-            ];
-            this.debugLine.geometry.setFromPoints(points);
-        }
-    }
-
-    updatePlacementIndicator() {
-        if (!this.placementMode || !this.renderer.xr.isPresenting) return;
-
-        const controller = this.controllers[0];
-        if (!controller) return;
-
-        this.workingMatrix.identity().extractRotation(controller.matrixWorld);
-        this.raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
-        this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(this.workingMatrix);
-
-        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0));
-        const intersectionPoint = new THREE.Vector3();
-
-        if (this.raycaster.ray.intersectPlane(plane, intersectionPoint)) {
-            this.placementIndicator.position.copy(intersectionPoint);
-            this.placementIndicator.visible = true;
-        }
-    }
-
-    fitCameraToScene() {
-        const box = new THREE.Box3().setFromObject(this.scene);
-        const size = box.getSize(new THREE.Vector3());
-        const center = box.getCenter(new THREE.Vector3());
-
-        const maxDim = Math.max(size.x, size.y, size.z);
-        const fov = this.camera.fov * (Math.PI / 180);
-        let cameraZ = Math.abs(maxDim / Math.tan(fov / 2));
-
-        cameraZ *= 1.5;
-
-        this.camera.position.set(0, 0, cameraZ);
-        this.orbitControls.target.copy(center);
-        this.camera.updateProjectionMatrix();
-        this.orbitControls.update();
-    }
-
-    animate() {
-        this.renderer.setAnimationLoop(() => {
-            if (this.renderer.xr.isPresenting) {
-                if (this.placementMode) {
-                    this.updatePlacementIndicator();
-                } else {
-                    this.updateXRInteraction();
-                }
-            } else {
-                this.orbitControls.update();
-            }
-            this.renderer.render(this.scene, this.camera);
-        });
-    }
-
-    loadDefaultModels() {
-        const models = [
-            { url: './assets/kool-mandoline-blade.glb', name: 'blade' },
-            { url: './assets/kool-mandoline-frame.glb', name: 'frame' },
-            { url: './assets/kool-mandoline-handguard.glb', name: 'handguard' },
-            { url: './assets/kool-mandoline-handletpe.glb', name: 'handle' }
-        ];
-
-        models.forEach(model => {
-            this.loadModel(model.url, model.name);
-        });
-    }
-}
-
-const app = new App();
-app.loadDefaultModels();
-
-export default app;
