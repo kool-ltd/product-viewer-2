@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DragControls } from 'three/addons/controls/DragControls.js';
 import { ARButton } from 'three/addons/webxr/ARButton.js';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 
 class App {
@@ -10,6 +11,16 @@ class App {
         this.loadedModels = new Map();
         this.draggableObjects = [];
         this.isARMode = false;
+        this.placementMode = true;
+        this.controller = null;
+        this.raycaster = new THREE.Raycaster();
+        this.intersectionPoint = new THREE.Vector3();
+        this.planeNormal = new THREE.Vector3(0, 1, 0);
+        this.plane = new THREE.Plane(this.planeNormal);
+        this.selectedObject = null;
+        this.grabbing = false;
+        this.initialGrabPoint = new THREE.Vector3();
+        this.initialObjectPosition = new THREE.Vector3();
 
         this.init();
         this.setupScene();
@@ -48,7 +59,69 @@ class App {
         this.renderer.xr.enabled = true;
         this.container.appendChild(this.renderer.domElement);
 
+        // Setup VR controller
+        this.controller = this.renderer.xr.getController(0);
+        this.controller.addEventListener('select', this.onSelect.bind(this));
+        this.scene.add(this.controller);
+
+        // Create placement indicator
+        const geometry = new THREE.RingGeometry(0.15, 0.2, 32);
+        const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+        this.placementIndicator = new THREE.Mesh(geometry, material);
+        this.placementIndicator.rotation.x = -Math.PI / 2;
+        this.placementIndicator.visible = false;
+        this.scene.add(this.placementIndicator);
+
+        // Add VR Button
+        document.body.appendChild(VRButton.createButton(this.renderer));
+
         window.addEventListener('resize', this.onWindowResize.bind(this));
+        
+        this.setupGrabbing();
+    }
+
+    setupGrabbing() {
+        this.controller.addEventListener('selectstart', () => {
+            if (!this.placementMode) {
+                const controllerPosition = new THREE.Vector3().setFromMatrixPosition(this.controller.matrixWorld);
+                const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.controller.quaternion);
+                this.raycaster.set(controllerPosition, direction);
+
+                const intersects = this.raycaster.intersectObjects(this.draggableObjects, true);
+                if (intersects.length > 0) {
+                    this.grabbing = true;
+                    this.selectedObject = this.findTopLevelObject(intersects[0].object);
+                    this.initialGrabPoint.copy(controllerPosition);
+                    this.initialObjectPosition.copy(this.selectedObject.position);
+                }
+            }
+        });
+
+        this.controller.addEventListener('selectend', () => {
+            this.grabbing = false;
+            this.selectedObject = null;
+        });
+    }
+
+    findTopLevelObject(object) {
+        while (object.parent && object.parent !== this.scene) {
+            object = object.parent;
+        }
+        return object;
+    }
+
+    onSelect() {
+        if (this.placementMode) {
+            this.placementMode = false;
+            this.placementIndicator.visible = false;
+            // Make all models visible at the placement position
+            this.draggableObjects.forEach(object => {
+                object.visible = true;
+                object.position.copy(this.placementIndicator.position);
+                // Ensure 1:1 scale
+                object.scale.setScalar(1);
+            });
+        }
     }
 
     setupScene() {
@@ -75,16 +148,14 @@ class App {
             });
             document.body.appendChild(arButton);
 
-            // Remove background when entering AR
             this.renderer.xr.addEventListener('sessionstart', () => {
                 this.isARMode = true;
-                this.scene.background = null;  // Remove background in AR
+                this.scene.background = null;
             });
 
-            // Restore background when exiting AR
             this.renderer.xr.addEventListener('sessionend', () => {
                 this.isARMode = false;
-                this.scene.background = new THREE.Color(0xcccccc);  // Restore gray background
+                this.scene.background = new THREE.Color(0xcccccc);
             });
         }
     }
@@ -105,81 +176,6 @@ class App {
 
         this.dragControls = new DragControls(this.draggableObjects, this.camera, this.renderer.domElement);
         this.setupControlsEventListeners();
-
-        // Add touch interaction for AR mode
-        this.renderer.domElement.addEventListener('touchstart', (event) => {
-            if (!this.isARMode) return;
-            
-            event.preventDefault();
-            
-            const touch = event.touches[0];
-            const mouse = new THREE.Vector2();
-            
-            // Convert touch coordinates to normalized device coordinates (-1 to +1)
-            mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
-            
-            const raycaster = new THREE.Raycaster();
-            raycaster.setFromCamera(mouse, this.camera);
-            
-            const intersects = raycaster.intersectObjects(this.draggableObjects, true);
-            
-            if (intersects.length > 0) {
-                const selectedObject = intersects[0].object;
-                let targetObject = selectedObject;
-                
-                // Find the root object (the loaded GLB)
-                while (targetObject.parent && targetObject.parent !== this.scene) {
-                    targetObject = targetObject.parent;
-                }
-                
-                // Store the selected object and its initial position
-                this.selectedObject = targetObject;
-                this.initialTouchX = touch.clientX;
-                this.initialTouchY = touch.clientY;
-                this.initialObjectPosition = targetObject.position.clone();
-            }
-        });
-
-        this.renderer.domElement.addEventListener('touchmove', (event) => {
-            if (!this.isARMode || !this.selectedObject) return;
-            
-            event.preventDefault();
-            
-            const touch = event.touches[0];
-            const deltaX = (touch.clientX - this.initialTouchX) * 0.01;
-            const deltaY = (touch.clientY - this.initialTouchY) * 0.01;
-            
-            // Move the object in the camera's plane
-            const cameraRight = new THREE.Vector3();
-            const cameraUp = new THREE.Vector3();
-            this.camera.getWorldDirection(cameraRight);
-            cameraRight.cross(this.camera.up).normalize();
-            cameraUp.copy(this.camera.up);
-            
-            this.selectedObject.position.copy(this.initialObjectPosition);
-            this.selectedObject.position.add(cameraRight.multiplyScalar(-deltaX));
-            this.selectedObject.position.add(cameraUp.multiplyScalar(-deltaY));
-        });
-
-        this.renderer.domElement.addEventListener('touchend', () => {
-            if (!this.isARMode) return;
-            this.selectedObject = null;
-        });
-    }
-
-    setupControlsEventListeners() {
-        this.dragControls.addEventListener('dragstart', () => {
-            if (!this.isARMode) {
-                this.orbitControls.enabled = false;
-            }
-        });
-
-        this.dragControls.addEventListener('dragend', () => {
-            if (!this.isARMode) {
-                this.orbitControls.enabled = true;
-            }
-        });
     }
 
     setupControlsEventListeners() {
@@ -245,15 +241,21 @@ class App {
             (gltf) => {
                 const model = gltf.scene;
                 model.userData.isDraggable = true;
-                this.draggableObjects.push(model);
                 
+                // Initially hide the model until placed in VR
+                if (this.renderer.xr.isPresenting) {
+                    model.visible = false;
+                }
+                
+                this.draggableObjects.push(model);
                 this.scene.add(model);
                 this.loadedModels.set(name, model);
                 
                 this.updateDragControls();
-                this.fitCameraToScene();
 
-                console.log(`Loaded model: ${name}`);
+                if (!this.renderer.xr.isPresenting) {
+                    this.fitCameraToScene();
+                }
             },
             (xhr) => {
                 console.log(`${name} ${(xhr.loaded / xhr.total * 100)}% loaded`);
@@ -292,6 +294,27 @@ class App {
         this.orbitControls.update();
     }
 
+    updatePlacementIndicator() {
+        if (!this.placementMode || !this.renderer.xr.isPresenting) return;
+
+        const controllerPosition = new THREE.Vector3().setFromMatrixPosition(this.controller.matrixWorld);
+        const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(this.controller.quaternion);
+        this.raycaster.set(controllerPosition, direction);
+
+        if (this.raycaster.ray.intersectPlane(this.plane, this.intersectionPoint)) {
+            this.placementIndicator.position.copy(this.intersectionPoint);
+            this.placementIndicator.visible = true;
+        }
+    }
+
+    updateGrabbing() {
+        if (this.grabbing && this.selectedObject) {
+            const controllerPosition = new THREE.Vector3().setFromMatrixPosition(this.controller.matrixWorld);
+            const delta = new THREE.Vector3().subVectors(controllerPosition, this.initialGrabPoint);
+            this.selectedObject.position.copy(this.initialObjectPosition).add(delta);
+        }
+    }
+
     loadDefaultModels() {
         const models = [
             { url: './assets/kool-mandoline-blade.glb', name: 'blade' },
@@ -307,7 +330,9 @@ class App {
 
     animate() {
         this.renderer.setAnimationLoop(() => {
-            if (this.isARMode) {
+            if (this.renderer.xr.isPresenting) {
+                this.updatePlacementIndicator();
+                this.updateGrabbing();
                 this.renderer.render(this.scene, this.camera);
             } else {
                 this.orbitControls.update();
