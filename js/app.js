@@ -34,9 +34,6 @@ class App {
             new THREE.LineBasicMaterial({ color: 0xff0000 })
         );
 
-        this.hitTestSource = null;
-        this.hitTestSourceRequested = false;
-
         this.init();
         this.setupScene();
         this.setupLights();
@@ -189,17 +186,15 @@ class App {
         directionalLight.position.set(5, 5, 5);
         this.scene.add(directionalLight);
     }
-    
     onSelectStart(event, controllerIndex) {
         const controller = event.target;
 
-        if (this.placementMode && this.placementIndicator.visible) {
+        if (this.placementMode) {
             this.placementMode = false;
             this.placementIndicator.visible = false;
             this.draggableObjects.forEach(object => {
                 object.visible = true;
                 object.position.copy(this.placementIndicator.position);
-                object.quaternion.copy(this.placementIndicator.quaternion);
                 object.scale.setScalar(1);
             });
             return;
@@ -285,7 +280,6 @@ class App {
         uploadContainer.appendChild(fileInput);
         document.body.appendChild(uploadContainer);
     }
-    
     setupARButton() {
         if ('xr' in navigator) {
             const arButton = ARButton.createButton(this.renderer, {
@@ -298,15 +292,11 @@ class App {
             this.renderer.xr.addEventListener('sessionstart', () => {
                 this.isARMode = true;
                 this.scene.background = null;
-                this.hitTestSourceRequested = false;
-                this.hitTestSource = null;
             });
 
             this.renderer.xr.addEventListener('sessionend', () => {
                 this.isARMode = false;
                 this.scene.background = new THREE.Color(0xcccccc);
-                this.hitTestSourceRequested = false;
-                this.hitTestSource = null;
             });
         }
     }
@@ -365,68 +355,33 @@ class App {
                 deltaPosition.subVectors(currentPosition, controller.userData.initialControllerPosition);
                 selectedObject.position.copy(controller.userData.initialPosition).add(deltaPosition);
 
-                // Update rotation (fixed direction)
+                // Update rotation
                 const rotationDelta = new THREE.Quaternion()
-                    .copy(currentRotation)
-                    .multiply(controller.userData.initialControllerRotation.invert());
+                    .copy(controller.userData.initialControllerRotation)
+                    .invert()
+                    .multiply(currentRotation);
                 
                 selectedObject.quaternion.copy(controller.userData.initialObjectRotation)
-                    .premultiply(rotationDelta);
+                    .multiply(rotationDelta);
             }
         });
     }
-
-    
-    async initializeHitTest() {
-        const session = this.renderer.xr.getSession();
-        
-        const viewerSpace = await session.requestReferenceSpace('viewer');
-        const hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
-        
-        this.hitTestSource = hitTestSource;
-    }
-
     updatePlacementIndicator() {
         if (!this.placementMode || !this.renderer.xr.isPresenting) return;
 
-        const session = this.renderer.xr.getSession();
-        const frame = this.renderer.xr.getFrame();
+        const controller = this.controllers[0];
+        if (!controller) return;
 
-        if (!this.hitTestSourceRequested) {
-            session.requestReferenceSpace('viewer').then((referenceSpace) => {
-                session.requestHitTestSource({ space: referenceSpace })
-                    .then((source) => {
-                        this.hitTestSource = source;
-                    });
-            });
-            this.hitTestSourceRequested = true;
-        }
+        this.workingMatrix.identity().extractRotation(controller.matrixWorld);
+        this.raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+        this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(this.workingMatrix);
 
-        if (this.hitTestSource) {
-            const hitTestResults = frame.getHitTestResults(this.hitTestSource);
-            
-            if (hitTestResults.length > 0) {
-                const hit = hitTestResults[0];
-                const pose = hit.getPose(this.renderer.xr.getReferenceSpace());
-                
-                if (pose) {
-                    this.placementIndicator.visible = true;
-                    this.placementIndicator.position.setFromMatrixPosition(pose.transform.matrix);
-                    
-                    // Orient the indicator to match the surface normal
-                    const normalMatrix = new THREE.Matrix4();
-                    normalMatrix.extractRotation(pose.transform.matrix);
-                    const normal = new THREE.Vector3(0, 1, 0);
-                    normal.applyMatrix4(normalMatrix);
-                    
-                    this.placementIndicator.quaternion.setFromUnitVectors(
-                        new THREE.Vector3(0, 1, 0),
-                        normal
-                    );
-                }
-            } else {
-                this.placementIndicator.visible = false;
-            }
+        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0));
+        const intersectionPoint = new THREE.Vector3();
+
+        if (this.raycaster.ray.intersectPlane(plane, intersectionPoint)) {
+            this.placementIndicator.position.copy(intersectionPoint);
+            this.placementIndicator.visible = true;
         }
     }
 
