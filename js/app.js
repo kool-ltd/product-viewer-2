@@ -61,10 +61,23 @@ class App {
             texture.mapping = THREE.EquirectangularReflectionMapping;
             this.scene.environment = texture;
             
-            this.renderer.physicallyCorrectLights = true;
+            this.renderer.useLegacyLights = false; // Use modern lighting
             this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
             this.renderer.toneMappingExposure = 0.7;
-            this.renderer.outputEncoding = THREE.sRGBEncoding;
+            this.renderer.outputColorSpace = THREE.SRGBColorSpace; // Replace outputEncoding
+        });
+    }
+
+    loadDefaultModels() {
+        const models = [
+            { url: './assets/kool-mandoline-blade.glb', name: 'blade' },
+            { url: './assets/kool-mandoline-frame.glb', name: 'frame' },
+            { url: './assets/kool-mandoline-handguard.glb', name: 'handguard' },
+            { url: './assets/kool-mandoline-handletpe.glb', name: 'handle' }
+        ];
+
+        models.forEach(model => {
+            this.loadModel(model.url, model.name);
         });
     }
 
