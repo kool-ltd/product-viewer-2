@@ -5,25 +5,30 @@ export class ProductManager {
     constructor() {
         this.loader = new GLTFLoader();
         this.parts = new Map();
+        this.placed = false;
     }
 
     async loadPart(url) {
         try {
             const gltf = await this.loader.loadAsync(url);
             const model = gltf.scene;
-
-            // Preserve original scale
+            model.visible = false; // Start hidden
+            
             const originalScale = model.scale.clone();
             model.userData.originalScale = originalScale;
-
-            // Add to parts collection
+            
             const partId = `part_${this.parts.size}`;
             this.parts.set(partId, model);
-
+            
             return model;
         } catch (error) {
             console.error('Error loading part:', error);
         }
+    }
+
+    setPlaced(placed) {
+        this.placed = placed;
+        this.parts.forEach(part => part.visible = placed);
     }
 
     clearParts() {
