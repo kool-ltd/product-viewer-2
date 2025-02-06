@@ -1,4 +1,3 @@
-// InteractionManager.js
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { DragControls } from 'three/addons/controls/DragControls.js';
@@ -31,6 +30,7 @@ export class InteractionManager {
         });
 
         this.dragControls.addEventListener('drag', (event) => {
+            // Prevent scaling during drag
             const object = event.object;
             if (object.userData.originalScale) {
                 object.scale.copy(object.userData.originalScale);

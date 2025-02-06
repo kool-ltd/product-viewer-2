@@ -1,4 +1,3 @@
-// ProductManager.js
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
@@ -8,32 +7,22 @@ export class ProductManager {
         this.parts = new Map();
     }
 
-    async loadPart(url, onProgress) {
+    async loadPart(url) {
         try {
-            const gltf = await new Promise((resolve, reject) => {
-                this.loader.load(
-                    url,
-                    resolve,
-                    (xhr) => {
-                        if (onProgress) {
-                            onProgress((xhr.loaded / xhr.total) * 100);
-                        }
-                    },
-                    reject
-                );
-            });
-
+            const gltf = await this.loader.loadAsync(url);
             const model = gltf.scene;
+
+            // Preserve original scale
             const originalScale = model.scale.clone();
             model.userData.originalScale = originalScale;
 
+            // Add to parts collection
             const partId = `part_${this.parts.size}`;
             this.parts.set(partId, model);
 
             return model;
         } catch (error) {
             console.error('Error loading part:', error);
-            throw error;
         }
     }
 
