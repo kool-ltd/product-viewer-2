@@ -1,107 +1,92 @@
 import * as THREE from 'three';
-import { VRButton } from 'three/addons/webxr/VRButton.js';
-import { ARButton } from 'three/addons/webxr/ARButton.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DragControls } from 'three/addons/controls/DragControls.js';
+import { ARButton } from 'three/addons/webxr/ARButton.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
-import { ProductManager } from './ProductManager.js';
-import { SceneManager } from './SceneManager.js';
-import { InteractionManager } from './InteractionManager.js';
 
 class App {
     constructor() {
-        this.container = document.getElementById('scene-container');
-        this.sceneManager = new SceneManager(this.container);
-        this.productManager = new ProductManager();
-        this.interactionManager = new InteractionManager(
-            this.sceneManager.scene,
-            this.sceneManager.camera,
-            this.container,
-            this.sceneManager.renderer
-        );
+        this.loadedModels = new Map();
+        this.draggableObjects = [];
+        this.isARMode = false;
 
         this.init();
-        this.setupEventListeners();
+        this.setupScene();
+        this.setupLights();
+        this.setupInitialControls();
+        this.setupFileUpload();
+        this.setupARButton();
         this.animate();
     }
 
-    async init() {
+    onWindowResize() {
+        if (this.camera && this.renderer) {
+            this.camera.aspect = window.innerWidth / window.innerHeight;
+            this.camera.updateProjectionMatrix();
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+    }
+
+    init() {
+        this.container = document.getElementById('scene-container');
+        this.scene = new THREE.Scene();
+        this.camera = new THREE.PerspectiveCamera(
+            75,
+            window.innerWidth / window.innerHeight,
+            0.1,
+            1000
+        );
+        this.camera.position.set(0, 0, 3);
+
+        this.renderer = new THREE.WebGLRenderer({ 
+            antialias: true,
+            alpha: true
+        });
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.setPixelRatio(window.devicePixelRatio);
+        this.renderer.xr.enabled = true;
+        this.container.appendChild(this.renderer.domElement);
+
+        window.addEventListener('resize', this.onWindowResize.bind(this));
+    }
+
+    setupScene() {
+        this.scene.background = new THREE.Color(0xcccccc);
+
         const rgbeLoader = new RGBELoader();
-        const envMap = await rgbeLoader.loadAsync('assets/brown_photostudio_02_4k.hdr');
-        this.sceneManager.setEnvironmentMap(envMap);
-
-        await this.loadDefaultProduct();
-
-        document.body.appendChild(VRButton.createButton(this.sceneManager.renderer));
-        this.setupARButton();
+        rgbeLoader.load('https://raw.githubusercontent.com/kool-ltd/product-viewer/main/assets/brown_photostudio_02_4k.hdr', (texture) => {
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            this.scene.environment = texture;
+            
+            this.renderer.physicallyCorrectLights = true;
+            this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            this.renderer.toneMappingExposure = 0.7;
+            this.renderer.outputEncoding = THREE.sRGBEncoding;
+        });
     }
 
     setupARButton() {
-        const arButton = ARButton.createButton(this.sceneManager.renderer, {
-            requiredFeatures: ['hit-test', 'dom-overlay'],
-            domOverlay: { root: document.body }
-        });
+        if ('xr' in navigator) {
+            const arButton = ARButton.createButton(this.renderer, {
+                requiredFeatures: ['hit-test'],
+                optionalFeatures: ['dom-overlay'],
+                domOverlay: { root: document.body }
+            });
+            document.body.appendChild(arButton);
 
-        this.sceneManager.renderer.xr.addEventListener('sessionstart', () => {
-            this.setupARScene();
-            this.sceneManager.scene.background = null;
-            this.interactionManager.orbitControls.enabled = false;
-        });
-
-        this.sceneManager.renderer.xr.addEventListener('sessionend', () => {
-            this.sceneManager.scene.background = envMap;
-            this.interactionManager.orbitControls.enabled = true;
-        });
-
-        document.body.appendChild(arButton);
-    }
-
-    setupARScene() {
-        let hitTestSource = null;
-        const self = this;
-        
-        this.sceneManager.renderer.xr.getSession().requestReferenceSpace('viewer').then((refSpace) => {
-            refSpace = refSpace;
-        });
-
-        const onSelect = () => {
-            if (!hitTestSource) return;
-
-            const hitTestResults = frame.getHitTestResults(hitTestSource);
-            if (hitTestResults.length > 0) {
-                const hit = hitTestResults[0];
-                const pose = hit.getPose(this.sceneManager.renderer.xr.getReferenceSpace());
-                
-                this.productManager.getParts().forEach(part => {
-                    const worldPosition = new THREE.Vector3();
-                    part.getWorldPosition(worldPosition);
-                    
-                    const distance = worldPosition.distanceTo(this.sceneManager.camera.position);
-                    part.scale.set(1, 1, 1).multiplyScalar(distance);
-                    
-                    part.position.setFromMatrixPosition(pose.transform.matrix);
-                    part.visible = true;
-                });
-            }
-        };
-
-        this.controller = this.sceneManager.renderer.xr.getController(0);
-        this.controller.addEventListener('select', onSelect);
-        this.sceneManager.scene.add(this.controller);
-
-        const onXRFrame = (time, frame) => {
-            if (!frame.session) return;
-
-            const referenceSpace = this.sceneManager.renderer.xr.getReferenceSpace();
-            const session = frame.session;
-            
-            session.requestHitTestSource({ space: referenceSpace }).then((source) => {
-                hitTestSource = source;
+            // Remove background when entering AR
+            this.renderer.xr.addEventListener('sessionstart', () => {
+                this.isARMode = true;
+                this.scene.background = null;  // Remove background in AR
             });
 
-            session.requestAnimationFrame(onXRFrame);
-        };
-        
-        this.sceneManager.renderer.setAnimationLoop(onXRFrame);
+            // Restore background when exiting AR
+            this.renderer.xr.addEventListener('sessionend', () => {
+                this.isARMode = false;
+                this.scene.background = new THREE.Color(0xcccccc);  // Restore gray background
+            });
+        }
     }
 
     setupLights() {
