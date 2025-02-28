@@ -174,21 +174,11 @@ class App {
                 this.orbitControls.enabled = false;
             }
         });
-
+    
         this.dragControls.addEventListener('dragend', () => {
             if (!this.isARMode) {
                 this.orbitControls.enabled = true;
             }
-        });
-    }
-
-    setupControlsEventListeners() {
-        this.dragControls.addEventListener('dragstart', () => {
-            this.orbitControls.enabled = false;
-        });
-
-        this.dragControls.addEventListener('dragend', () => {
-            this.orbitControls.enabled = true;
         });
     }
 
