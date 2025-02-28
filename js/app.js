@@ -1,9 +1,9 @@
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.150.0/build/three.module.js';
-import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.150.0/examples/jsm/controls/OrbitControls.js';
-import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.150.0/examples/jsm/loaders/GLTFLoader.js';
-import { DragControls } from 'https://cdn.jsdelivr.net/npm/three@0.150.0/examples/jsm/controls/DragControls.js';
-import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.150.0/examples/jsm/webxr/ARButton.js';
-import { RGBELoader } from 'https://cdn.jsdelivr.net/npm/three@0.150.0/examples/jsm/loaders/RGBELoader.js';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DragControls } from 'three/addons/controls/DragControls.js';
+import { ARButton } from 'three/addons/webxr/ARButton.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 
 class App {
     constructor() {
@@ -168,7 +168,6 @@ class App {
         });
     }
 
-    // Note: removing duplicate setupControlsEventListeners; use one implementation.
     setupControlsEventListeners() {
         this.dragControls.addEventListener('dragstart', () => {
             if (!this.isARMode) {
@@ -180,6 +179,16 @@ class App {
             if (!this.isARMode) {
                 this.orbitControls.enabled = true;
             }
+        });
+    }
+
+    setupControlsEventListeners() {
+        this.dragControls.addEventListener('dragstart', () => {
+            this.orbitControls.enabled = false;
+        });
+
+        this.dragControls.addEventListener('dragend', () => {
+            this.orbitControls.enabled = true;
         });
     }
 
